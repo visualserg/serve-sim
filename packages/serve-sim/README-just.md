@@ -31,13 +31,54 @@ just app ~/path/to/flutter-project      # build it for the simulator first, then
 just app-run ~/path/to/flutter-project  # flutter run with hot reload (r, R, q), in the foreground
 ```
 
-A Flutter project is a folder with `pubspec.yaml`, or with one in `src/`. Both recipes take a simulator UDID as a second argument and default to the booted one. `app` replaces any running copy, so it is also how to put a fresh build on.
+A Flutter project is a folder with `pubspec.yaml`, or with one in `src/`. `app` replaces any running copy, so it is also how to put a fresh build on. Every app recipe works on the booted simulator; `just device=<udid> app ...` picks another.
 
-Shortcuts for your own apps go in `local.just` at the repo root, which the justfile imports when it exists. It stays out of git through `.git/info/exclude` (add `/local.just` there in a fresh clone), so personal paths never reach the public fork:
+### Debug overrides
+
+Flags and settings can be swapped for one session without a rebuild, for an app that reads them (the convention is below):
+
+```sh
+just launch ~/path/to/flutter-project showAdminPanel=true API_BASE_URL=https://staging.example
+just launch ~/path/to/flutter-project   # no arguments: overrides gone, a clean launch
+just app ~/path/to/flutter-project showAdminPanel=true      # the same after a fresh build
+just app-run ~/path/to/flutter-project showAdminPanel=true  # and under flutter run
+```
+
+`launch` relaunches the installed app in about a second. The app is a project folder, a `.app` or a bundle id.
+
+The overrides go to `Library/Application Support/debug-overrides.env` in the app's data container, one `KEY=VALUE` per line, and the app reads that file at startup in debug builds. They hold until the next launch through `just`, so a relaunch iOS does on its own (a crash, a permission revoked in Settings) keeps them, and `R` under `flutter run` rereads them. What the app logs under `[DebugOverrides]` is echoed back after a `launch`, so a mistyped key or a value of the wrong type shows up right there:
+
+```
+[DebugOverrides] launch_paywall_enabled=nope, dailyBonusMode=enabled
+[DebugOverrides] launch_paywall_enabled=nope ignored: expected true or false
+```
+
+### Shared preferences
+
+A Flutter app's `shared_preferences` live in its container too, so its state can be read and changed from the host, with no code in the app:
+
+```sh
+just prefs ~/path/to/flutter-project                        # list them
+just prefs ~/path/to/flutter-project hint.drawing_tips_seen=false
+just prefs ~/path/to/flutter-project paywall.launch_last_shown_at=   # key= deletes
+```
+
+Keys are the app's own, without the `flutter.` prefix the plugin adds. A value keeps the type its key already has, so a timestamp stored as a string stays a string; a new key becomes a bool, an integer or a string by its look. The app is stopped before the write, so it cannot save its cached copy back over the change, and relaunched after.
+
+### Your own apps
+
+Shortcuts for your own apps go in `local.just` at the repo root, which the justfile imports when it exists. It stays out of git through `.git/info/exclude` (add `/local.just` there in a fresh clone), so personal paths never reach the public fork. Arguments are passed on with `[positional-arguments]`, so a value with spaces stays one argument:
 
 ```just
-myapp device="booted": (app "~/path/to/flutter-project" device)
-myapp-run device="booted": (app-run "~/path/to/flutter-project" device)
+myapp_src := "~/path/to/flutter-project"
+
+[positional-arguments]
+myapp *overrides:
+    @"{{ just_executable() }}" --justfile "{{ justfile() }}" device="{{ device }}" app "{{ myapp_src }}" "$@"
+
+[positional-arguments]
+myapp-launch *overrides:
+    @"{{ just_executable() }}" --justfile "{{ justfile() }}" device="{{ device }}" launch "{{ myapp_src }}" "$@"
 ```
 
 ## Before a take

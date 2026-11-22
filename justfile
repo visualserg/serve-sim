@@ -43,15 +43,21 @@ up port=port codec=codec: build
 cursor dir="":
     bun run packages/serve-sim/scripts/fork/overlay-cursor.ts "{{ dir }}"
 
+# The simulator the app recipes work on: a UDID, or `booted`. Pick another
+# with `just device=<udid> app ...`.
+device := "booted"
+
 # A .app is installed as it is. A Flutter project (a folder with pubspec.yaml,
 # or with src/pubspec.yaml) is built for the simulator first. The app replaces
 # any running copy and is launched, so it shows up in the open preview
-# straight away. `device` is a UDID or `booted`.
+# straight away. KEY=VALUE arguments are debug overrides, as for `launch`.
 #
-# Build if needed, install and launch an app. Usage: just app <path> [device]
-app path device="booted":
+# Build if needed, install and launch an app. Usage: just app <path> [KEY=VALUE ...]
+[positional-arguments]
+app path *overrides:
     #!/usr/bin/env bash
     set -euo pipefail
+    shift
     src="{{ path }}"
     src="${src/#\~/$HOME}"
     if [[ "$src" != *.app ]]; then
@@ -60,22 +66,144 @@ app path device="booted":
       (cd "$src" && flutter build ios --simulator --debug)
       src=$(ls -d "$src"/build/ios/iphonesimulator/*.app | head -1)
     fi
-    bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$src/Info.plist")
     xcrun simctl install "{{ device }}" "$src"
-    xcrun simctl launch --terminate-running-process "{{ device }}" "$bundle"
+    exec "{{ just_executable() }}" --justfile "{{ justfile() }}" device="{{ device }}" launch "$src" "$@"
 
-# Flutter takes a device by UDID or name, not `booted`, so the UDID is looked
-# up first. Stays in the foreground: r hot-reloads, R restarts, q quits.
+# For an app that reads `Library/Application Support/debug-overrides.env` in
+# its data container at startup, in debug builds only. They hold
+# until the next launch through just, so they survive the relaunches iOS does
+# on its own (a crash, a permission revoked in Settings); a launch without any
+# clears them. The app is a bundle id, a .app or a Flutter project. What the
+# app logs under `[DebugOverrides]` is echoed back, which is where a mistyped
+# key shows up.
 #
-# Run a Flutter project on the simulator with hot reload. Usage: just app-run <path> [device]
-app-run path device="booted":
+# Relaunch an installed app with debug overrides. Usage: just launch <app> [KEY=VALUE ...]
+[positional-arguments]
+launch app *overrides:
     #!/usr/bin/env bash
     set -euo pipefail
+    shift
+    bundle=$("{{ just_executable() }}" --justfile "{{ justfile() }}" _bundle "{{ app }}")
+    "{{ just_executable() }}" --justfile "{{ justfile() }}" device="{{ device }}" _overrides "$bundle" "$@"
+    launched=$(xcrun simctl launch --terminate-running-process "{{ device }}" "$bundle")
+    echo "$launched"
+    (( $# )) || exit 0
+    pid=${launched##*: }
+    for _ in 1 2 3 4 5 6 7 8; do
+      sleep 1
+      report=$(xcrun simctl spawn "{{ device }}" log show --last 30s --style compact \
+        --predicate "processID == $pid AND eventMessage CONTAINS \"[DebugOverrides]\"" 2>/dev/null \
+        | grep -o '\[DebugOverrides\].*' || true)
+      if [[ -n "$report" ]]; then echo "$report"; exit 0; fi
+    done
+    echo "The app said nothing about its overrides: does it read debug-overrides.env?"
+
+# Flutter takes a device by UDID or name, not `booted`, so the UDID is looked
+# up first. Stays in the foreground: r hot-reloads, R restarts (and rereads
+# the overrides), q quits. Overrides need the app installed once already,
+# since they are written before flutter run installs anything.
+#
+# Run a Flutter project on the simulator with hot reload. Usage: just app-run <path> [KEY=VALUE ...]
+[positional-arguments]
+app-run path *overrides:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
     src="{{ path }}"
     src="${src/#\~/$HOME}"
     if [[ ! -f "$src/pubspec.yaml" && -f "$src/src/pubspec.yaml" ]]; then src="$src/src"; fi
+    bundle=$("{{ just_executable() }}" --justfile "{{ justfile() }}" _bundle "$src")
+    if xcrun simctl get_app_container "{{ device }}" "$bundle" data >/dev/null 2>&1 || (( $# )); then
+      "{{ just_executable() }}" --justfile "{{ justfile() }}" device="{{ device }}" _overrides "$bundle" "$@"
+    fi
     udid=$(xcrun simctl getenv "{{ device }}" SIMULATOR_UDID)
     cd "$src" && exec flutter run -d "$udid"
+
+# Keys are the app's own, without the `flutter.` prefix the plugin adds. A
+# value keeps the type its key already has (a timestamp stored as a string
+# stays a string); a new key is a bool, an integer or a string by its look.
+# `key=` deletes. The app is stopped first, so it cannot write its cached
+# copy back over the change, and relaunched after.
+#
+# Show or change a Flutter app's shared_preferences. Usage: just prefs <app> [key=value ...]
+[positional-arguments]
+prefs app *changes:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
+    bundle=$("{{ just_executable() }}" --justfile "{{ justfile() }}" _bundle "{{ app }}")
+    data=$(xcrun simctl get_app_container "{{ device }}" "$bundle" data)
+    domain="$data/Library/Preferences/$bundle"
+    defaults() { xcrun simctl spawn "{{ device }}" defaults "$@"; }
+    show() {
+      defaults export "$domain" - 2>/dev/null | plutil -p - \
+        | awk '/^  "/ { keep = ($0 ~ /^  "flutter\./) } keep { sub(/"flutter\./, "\""); print }'
+    }
+    if (( $# == 0 )); then show; exit; fi
+    for change in "$@"; do
+      [[ "$change" == *=* && "${change%%=*}" != "" ]] || { echo "Not key=value: $change" >&2; exit 1; }
+    done
+    xcrun simctl terminate "{{ device }}" "$bundle" 2>/dev/null || true
+    for change in "$@"; do
+      key="flutter.${change%%=*}"
+      value="${change#*=}"
+      if [[ -z "$value" ]]; then
+        defaults delete "$domain" "$key" 2>/dev/null || true
+        continue
+      fi
+      type=$(defaults read-type "$domain" "$key" 2>/dev/null | awk '{ print $3 }' || true)
+      if [[ -z "$type" ]]; then
+        if [[ "$value" == true || "$value" == false ]]; then type=boolean
+        elif [[ "$value" =~ ^-?[0-9]+$ ]]; then type=integer
+        else type=string; fi
+      fi
+      case "$type" in
+        boolean) defaults write "$domain" "$key" -bool "$value" ;;
+        integer) defaults write "$domain" "$key" -int "$value" ;;
+        float) defaults write "$domain" "$key" -float "$value" ;;
+        string) defaults write "$domain" "$key" -string "$value" ;;
+        *) echo "$key holds a $type, which this cannot write" >&2; exit 1 ;;
+      esac
+    done
+    show
+    xcrun simctl launch "{{ device }}" "$bundle"
+
+# Writes the overrides file for `launch` and `app-run`, or removes it when
+# there are none. Staged and moved, so a launch never reads half of it.
+[private]
+[positional-arguments]
+_overrides bundle *overrides:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
+    data=$(xcrun simctl get_app_container "{{ device }}" "{{ bundle }}" data)
+    file="$data/Library/Application Support/debug-overrides.env"
+    if (( $# == 0 )); then rm -f "$file"; exit; fi
+    for kv in "$@"; do
+      [[ "$kv" =~ ^[A-Za-z_][A-Za-z0-9_.]*= ]] || { echo "Not KEY=VALUE: $kv" >&2; exit 1; }
+    done
+    mkdir -p "${file%/*}"
+    printf '%s\n' "$@" > "$file.part"
+    mv "$file.part" "$file"
+    printf 'override %s\n' "$@"
+
+# A .app or a Flutter project's last simulator build gives the id it was
+# installed under; without a build, the Xcode project's own setting.
+[private]
+_bundle app:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    app="{{ app }}"
+    app="${app/#\~/$HOME}"
+    if [[ ! -e "$app" ]]; then echo "$app"; exit; fi
+    if [[ "$app" == *.app ]]; then /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist"; exit; fi
+    if [[ ! -f "$app/pubspec.yaml" && -f "$app/src/pubspec.yaml" ]]; then app="$app/src"; fi
+    built=$(ls -d "$app"/build/ios/iphonesimulator/*.app 2>/dev/null | head -1 || true)
+    if [[ -n "$built" ]]; then /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$built/Info.plist"; exit; fi
+    id=$(grep -hE 'PRODUCT_BUNDLE_IDENTIFIER = ' "$app/ios/Runner.xcodeproj/project.pbxproj" 2>/dev/null \
+      | grep -v Tests | head -1 | sed -E 's/.*= "?([^";]+)"?;.*/\1/' || true)
+    if [[ -z "$id" ]]; then echo "No bundle id found for {{ app }}" >&2; exit 1; fi
+    echo "$id"
 
 # Freezes the whole bar, not just the clock: a carrier name or a battery that
 # drops a percent mid-take dates the footage as surely as a wrong time does.
