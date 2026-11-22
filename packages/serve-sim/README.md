@@ -1,5 +1,7 @@
 # serve-sim
 
+> Fork: what it adds and how it stays mergeable with upstream is in [FORK.md](./FORK.md).
+
 The `npx serve` of Apple Simulators.
 
 Host your simulator for use with Agent tools like Codex, Cursor, or Claude Desktop — locally, over your LAN, or host on a remote mac and tunnel anywhere.
