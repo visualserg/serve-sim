@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { simEndpoint } from "../utils/sim-endpoint";
 import { recordingFileName } from "../../recording";
+import type { RecordingSidecar } from "../fork/recording-sidecar"; // fork:
 
 export type ScreenRecordingState =
   | { status: "idle" }
@@ -9,8 +10,8 @@ export type ScreenRecordingState =
   | { status: "recording"; startedAt: number }
   | { status: "saving" };
 
-function recordingEndpoint(device: string, action?: "start" | "stop", token?: string): string {
-  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+function recordingEndpoint(device: string, action?: "start" | "stop", token?: string, extra?: string): string { // fork: extra
+  const query = token ? `?token=${encodeURIComponent(token)}` : extra ? `?${extra}` : ""; // fork: extra
   return simEndpoint(`helper/${encodeURIComponent(device)}/recording${action ? `/${action}` : ""}${query}`);
 }
 
@@ -68,6 +69,7 @@ export function useScreenRecording(
   {
     pollMs = RECORDING_STATUS_POLL_MS,
     onDownloaded,
+    sidecar, // fork:
   }: {
     pollMs?: number;
     /**
@@ -75,6 +77,7 @@ export function useScreenRecording(
      * Finder toast). When set, it replaces the plain "Saved <file>" toast.
      */
     onDownloaded?: (downloaded: { fileName: string; blob: Blob }) => void;
+    sidecar?: RecordingSidecar; // fork: rides along with the recordings this hook starts
   } = {},
 ) {
   const [state, setState] = useState<ScreenRecordingState>({ status: "idle" });
@@ -89,6 +92,8 @@ export function useScreenRecording(
   const ownedRef = useRef<{ device: string; token: string } | null>(null);
   const onDownloadedRef = useRef(onDownloaded);
   onDownloadedRef.current = onDownloaded;
+  const sidecarRef = useRef(sidecar); // fork:
+  sidecarRef.current = sidecar; // fork:
   const stateRef = useRef(state);
   useEffect(() => { stateRef.current = state; }, [state]);
 
@@ -99,13 +104,15 @@ export function useScreenRecording(
     const previous = stateRef.current;
     setState({ status: "saving" });
     const owned = ownedRef.current?.device === udid ? ownedRef.current.token : undefined;
+    const sidecarBody = owned ? sidecarRef.current?.finish() ?? null : null; // fork:
     try {
-      const res = await fetch(recordingEndpoint(udid, "stop", owned), { method: "POST" });
+      const res = await fetch(recordingEndpoint(udid, "stop", owned), { method: "POST", ...(sidecarBody != null ? { headers: { "Content-Type": "application/json" }, body: sidecarBody } : {}) }); // fork: body
       if (!res.ok) throw new Error(await errorMessage(res));
       if (ownedRef.current?.token === owned) ownedRef.current = null;
-      const fileName = attachmentFileName(res.headers.get("content-disposition")) ?? recordingFileName();
+      const saved = sidecarRef.current?.collected?.(res.headers) ?? null; // fork: the server kept the movie itself
+      const fileName = saved?.slice(saved.lastIndexOf("/") + 1) || attachmentFileName(res.headers.get("content-disposition")) || recordingFileName(); // fork: saved
       const blob = await res.blob();
-      download(blob, fileName);
+      if (!saved) download(blob, fileName); // fork: no second copy of a saved movie
       if (onDownloadedRef.current) onDownloadedRef.current({ fileName, blob });
       else toast.success(`Saved ${fileName}`);
       if (deviceRef.current === udid) setState({ status: "idle" });
@@ -137,7 +144,7 @@ export function useScreenRecording(
       // A start/stop in flight owns the state until it settles.
       if (current.status === "starting" || current.status === "saving") return;
       if (!body.recording) {
-        if (ownedRef.current?.device === device) ownedRef.current = null;
+        if (ownedRef.current?.device === device) { ownedRef.current = null; sidecarRef.current?.abort(); } // fork: abort
         if (current.status !== "idle") setState({ status: "idle" });
         return;
       }
@@ -156,6 +163,7 @@ export function useScreenRecording(
     return () => {
       cancelled = true;
       clearInterval(timer);
+      if (ownedRef.current?.device === device) sidecarRef.current?.abort(); // fork: the page leaves, the recording doesn't
       if (deviceRef.current === device) deviceRef.current = undefined;
     };
   }, [device, pollMs, stop]);
@@ -165,11 +173,16 @@ export function useScreenRecording(
     if (!udid) return;
     epochRef.current++;
     setState({ status: "starting" });
+    const sidecar = sidecarRef.current; // fork:
+    sidecar?.begin(); // fork:
+    const dispatchedAt = performance.now(); // fork:
     try {
-      const res = await fetch(recordingEndpoint(udid, "start"), { method: "POST" });
+      const res = await fetch(recordingEndpoint(udid, "start", undefined, sidecar?.startQuery && new URLSearchParams(sidecar.startQuery).toString()), { method: "POST" }); // fork: query
+      const roundTripMs = performance.now() - dispatchedAt; // fork:
       if (!res.ok) throw new Error(await errorMessage(res));
-      const body = await res.json() as { startedAt?: string; token?: string };
+      const body = await res.json() as { startedAt?: string; respondedAt?: string; token?: string }; // fork: respondedAt
       if (deviceRef.current !== udid) {
+        sidecar?.abort(); // fork:
         // Unmounted or switched devices mid-start: don't orphan a recording
         // nobody can see. The server drops the file when we hang up.
         void fetch(recordingEndpoint(udid, "stop", body.token), { method: "POST" })
@@ -178,8 +191,10 @@ export function useScreenRecording(
         return;
       }
       ownedRef.current = body.token ? { device: udid, token: body.token } : null;
+      sidecar?.started({ startedAt: body.startedAt, respondedAt: body.respondedAt, roundTripMs }); // fork:
       setState(recordingState(body.startedAt));
     } catch (error) {
+      sidecar?.abort(); // fork:
       toast.error(`Could not start recording: ${error instanceof Error ? error.message : String(error)}`);
       // e.g. 409: another tab or the CLI is already recording this device.
       const body = await fetchRecordingStatus(udid);

@@ -121,7 +121,7 @@ import {
   sendOrQueueWsMessage,
   type QueuedWsMessage,
 } from "./utils/ws-send-queue";
-import { installForkViewer } from "./fork"; // fork:
+import { createForkRecording, installForkViewer } from "./fork"; // fork:
 
 installForkViewer(); // fork: press cursor, resize-handle switch
 
@@ -1114,8 +1114,10 @@ function AppWithConfig({
 
   const uploads = useUploadToasts();
   const screenshot = useScreenshotToast(config.device, screenshotDisplayName(matchedDisplay?.role ?? duoProjection?.panel));
-  const recordingToast = useRecordingToast();
+  const [forkRecording] = useState(createForkRecording); // fork: cursor track and capture folder
+  const recordingToast = useRecordingToast({ locate: forkRecording.locate }); // fork: locate
   const screenRecording = useScreenRecording(config.device, {
+    sidecar: forkRecording.sidecar, // fork:
     onDownloaded: recordingToast.show,
   });
   const mediaDrop = useMediaDrop({

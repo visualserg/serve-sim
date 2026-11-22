@@ -864,6 +864,7 @@ export function SimulatorView({
         <div
           ref={surfaceRef}
           data-testid="simulator-surface" // fork: the pointer track and viewer styles find the stream by it
+          data-orientation={streamDisplayGeometry(screenSizeRef.current).inputOrientation ?? "portrait"} // fork:
           style={{
             position: "relative",
             width: fittedBox ? `${fittedBox.width}px` : "100%",

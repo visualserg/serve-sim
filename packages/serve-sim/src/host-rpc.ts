@@ -16,6 +16,7 @@ import { PERMISSION_SERVICES } from "./client/utils/permissions";
 import { shellJoin } from "./shell-quote";
 import { simctlArguments } from "./simctl";
 import { getUiOption, setUiOption } from "./ui-settings";
+import { preferCursorRender } from "./fork/cursor-capture"; // fork:
 
 // Narrow host actions for the preview page, carried as `{id, rpc}` frames on
 // the `/exec-ws` control channel. The page never sends shell text: every
@@ -371,7 +372,7 @@ export function createHostRpcHandler(opts: HostRpcOptions): HostRpcHandler {
 
     async revealRecording(p) {
       const path = recordingPathParam(p);
-      return { ...(await run("open", ["-R", path])) };
+      return { ...(await run("open", ["-R", preferCursorRender(path)])) }; // fork: the cursor render once it exists
     },
 
     async revealApp(p) {

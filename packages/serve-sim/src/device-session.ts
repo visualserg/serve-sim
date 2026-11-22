@@ -39,6 +39,7 @@ import { simulatorDeviceInfo } from "./device";
 import { createReadStream } from "fs";
 import type { Readable } from "stream";
 import { mkdir, rm, stat } from "fs/promises";
+import { CAPTURE_HEADER, captureForStop, readCursorTrack, type CursorCaptureDependencies } from "./fork/cursor-capture"; // fork:
 import { tmpdir } from "os";
 import { basename, join } from "path";
 import { randomUUID } from "crypto";
@@ -319,6 +320,8 @@ export interface DeviceSessionDependencies {
   readDeviceHubInputShadowed?: (udid: string) => Promise<boolean | null>;
   /** Clock for the shadow-flag TTL; defaults to `Date.now`. */
   now?: () => number;
+  /** fork: where toolbar recordings save their cursor captures, and how the overlay runs. */
+  cursorCapture?: CursorCaptureDependencies;
 }
 
 type ActiveRecording = {
@@ -1145,7 +1148,8 @@ export class DeviceSession {
       }).finally(() => this.holdForOwner(active));
     }, maxMs);
     active.limitTimer.unref?.();
-    this.sendJson(res, 200, { recording: true, startedAt, token });
+    // fork: `respondedAt` lets the page take the server's own work out of the round trip.
+    this.sendJson(res, 200, { recording: true, startedAt, token, respondedAt: new Date().toISOString() });
   }
 
   /**
@@ -1201,6 +1205,7 @@ export class DeviceSession {
     if (active.holdTimer) clearTimeout(active.holdTimer);
     active.holdTimer = undefined;
     active.phase = "stopping";
+    const cursorTrack = readCursorTrack(req); // fork: the page's pointer track, read during the finalize
     // Finalizing a long recording takes a moment; notice if the client
     // leaves. Runtimes differ in which of these fire for an aborted request.
     // (Not req "close": Node also emits it once a request completes normally.)
@@ -1224,6 +1229,8 @@ export class DeviceSession {
       stopWatching();
       if (this.recording === active) this.recording = undefined;
     }
+    // fork: saved before anything below can delete the movie, and even when the page has gone.
+    const captured = await captureForStop({ udid: this.udid, moviePath: active.path, track: await cursorTrack, summary, deps: this.dependencies?.cursorCapture });
     if (clientGone || req.aborted || res.destroyed || req.socket?.destroyed) {
       await rm(active.path, { force: true }).catch(() => {});
       return;
@@ -1246,6 +1253,7 @@ export class DeviceSession {
       "Content-Disposition": `attachment; filename="${fileName}"`,
       "Cache-Control": "no-store",
       [RECORDING_SUMMARY_HEADER]: publicSummary,
+      ...(captured ? { [CAPTURE_HEADER]: encodeURIComponent(captured) } : {}), // fork:
     });
     try {
       await new Promise<void>((resolve) => {

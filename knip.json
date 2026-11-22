@@ -24,6 +24,7 @@
         "build.ts",
         "dev.ts",
         "scripts/build-trails.ts",
+        "scripts/fork/overlay-cursor.ts",
         "scripts/bench/bench-stream.ts",
         "scripts/publish-version.mjs"
       ]

@@ -2,4 +2,5 @@
 // only through seams tagged `fork:` (`just seams` lists them); the Stream row
 // is imported straight from ./stream-settings by its own seam.
 
+export { createForkRecording } from "./recording";
 export { installForkViewer } from "./viewer";

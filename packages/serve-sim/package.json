@@ -45,6 +45,7 @@
     "src/device-hub-input.ts",
     "src/device-pose.ts",
     "src/device-session.ts",
+    "src/fork/*.ts",
     "src/devicekit-chrome.ts",
     "src/diagnostics-redact.ts",
     "src/doctor.ts",
