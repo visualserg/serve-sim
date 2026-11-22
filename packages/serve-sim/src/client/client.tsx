@@ -121,6 +121,9 @@ import {
   sendOrQueueWsMessage,
   type QueuedWsMessage,
 } from "./utils/ws-send-queue";
+import { installForkViewer } from "./fork"; // fork:
+
+installForkViewer(); // fork: press cursor, resize-handle switch
 
 // ─── App ───
 
@@ -646,6 +649,7 @@ function AppWithConfig({
     hasChrome: !!activeChrome,
   });
   const chromeLayout = useChrome ? chromeLayoutCandidate : null;
+  const bareScreen = hideChrome && !!activeChrome && !foldable; // fork: frame off means no fake bezel either
   const chromeScale = chromeLayout?.chromeScale ?? 1;
   // While the device turns, the container snaps to its new size and the rotor
   // carries the motion; a width / aspect tween here would squash the bezel.
@@ -1272,9 +1276,9 @@ function AppWithConfig({
                   // content and, on the <canvas> path, composites its
                   // semi-transparent white against the black page as a visible
                   // outline. An inset shadow paints over the (opaque) video edge.
-                  borderRadius: useChrome ? 0 : imgBorderRadius,
-                  cornerShape: useChrome ? undefined : "superellipse(1.3)",
-                  ...(useChrome
+                  borderRadius: useChrome || bareScreen ? 0 : imgBorderRadius, // fork: bareScreen
+                  cornerShape: useChrome || bareScreen ? undefined : "superellipse(1.3)", // fork: bareScreen
+                  ...(useChrome || bareScreen // fork: bareScreen
                     ? {}
                     : { boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.2)" }),
                 } as CSSProperties}
@@ -1356,7 +1360,7 @@ function AppWithConfig({
               // stream frame, and backdrop-filter forces a full re-blur per
               // frame for the whole drag — the tint alone stays cheap.
               className="absolute inset-0 flex flex-col items-center justify-center gap-2 border-2 border-dashed border-[#a5b4fc] bg-[rgba(99,102,241,0.18)] text-[#a5b4fc] pointer-events-none z-20"
-              style={{ borderRadius: useChrome ? undefined : imgBorderRadius }}
+              style={{ borderRadius: useChrome || bareScreen ? undefined : imgBorderRadius }} // fork: bareScreen
             >
               <Upload size={32} strokeWidth={1.5} />
               <span className="text-[13px] font-medium">Drop media or .ipa</span>

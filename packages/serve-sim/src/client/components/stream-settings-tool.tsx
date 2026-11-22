@@ -3,6 +3,7 @@ import { Frame } from "lucide-react";
 import { CollapsibleSection } from "./collapsible-section";
 import { SettingRow, SettingSelect } from "./simulator-settings-tool";
 import { SettingSwitch } from "./setting-switch";
+import { ForkStreamSettings } from "../fork/stream-settings"; // fork:
 
 // Client-side video preference. "auto" decodes H.264 (AVCC via WebCodecs) when
 // the browser supports it; "mjpeg" forces the software JPEG path. H.264 decode
@@ -109,6 +110,7 @@ export function StreamSettingsTool({
             </p>
           </>
         )}
+        <ForkStreamSettings /> {/* fork: */}
         <p className="text-[11px] text-ink-55 leading-snug px-0.5">
           {!avccSupported
             ? "This browser can't decode H.264, so the stream uses MJPEG."

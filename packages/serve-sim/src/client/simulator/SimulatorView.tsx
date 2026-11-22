@@ -831,7 +831,8 @@ export function SimulatorView({
   // to the rounded-corner mask.
   const canvasStyle: CSSProperties = {
     ...streamImageStyle,
-    transform: `${streamImageStyle.transform ?? ""} scale(${CANVAS_SEAM_OVERSHOOT})`,
+    // fork: only against a rounded clip; square corners have no seam, and the overshoot would crop the bare stream.
+    transform: streamImageStyle.borderRadius ? `${streamImageStyle.transform ?? ""} scale(${CANVAS_SEAM_OVERSHOOT})` : streamImageStyle.transform,
   };
 
   return (
@@ -862,6 +863,7 @@ export function SimulatorView({
       >
         <div
           ref={surfaceRef}
+          data-testid="simulator-surface" // fork: the pointer track and viewer styles find the stream by it
           style={{
             position: "relative",
             width: fittedBox ? `${fittedBox.width}px` : "100%",
