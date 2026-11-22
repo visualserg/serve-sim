@@ -21,6 +21,25 @@ just serve 3399  # serve the booted simulator at http://localhost:3399
 
 Only a page that asks for the H.264 stream can produce those errors: with no browser attached there are none either way. So a tab left open against an earlier run keeps them coming until it is reloaded.
 
+## Apps on the simulator
+
+serve-sim streams whatever runs on the simulator, so putting an app in the preview means installing it there:
+
+```sh
+just app ~/path/to/App.app              # install and launch a ready build
+just app ~/path/to/flutter-project      # build it for the simulator first, then the same
+just app-run ~/path/to/flutter-project  # flutter run with hot reload (r, R, q), in the foreground
+```
+
+A Flutter project is a folder with `pubspec.yaml`, or with one in `src/`. Both recipes take a simulator UDID as a second argument and default to the booted one. `app` replaces any running copy, so it is also how to put a fresh build on.
+
+Shortcuts for your own apps go in `local.just` at the repo root, which the justfile imports when it exists. It stays out of git through `.git/info/exclude` (add `/local.just` there in a fresh clone), so personal paths never reach the public fork:
+
+```just
+myapp device="booted": (app "~/path/to/flutter-project" device)
+myapp-run device="booted": (app-run "~/path/to/flutter-project" device)
+```
+
 ## Before a take
 
 ```sh

@@ -8,6 +8,10 @@ upstream := "https://github.com/EvanBacon/serve-sim.git"
 # Pass "auto" as the second argument to try H.264 again.
 codec := "mjpeg"
 
+# Personal shortcuts for this machine (apps, paths). Kept out of git through
+# .git/info/exclude, so nothing personal lands in the public fork.
+import? 'local.just'
+
 default:
     @just --list
 
@@ -38,6 +42,40 @@ up port=port codec=codec: build
 # Draw the recorded pointer track onto the movie (newest capture by default).
 cursor dir="":
     bun run packages/serve-sim/scripts/fork/overlay-cursor.ts "{{ dir }}"
+
+# A .app is installed as it is. A Flutter project (a folder with pubspec.yaml,
+# or with src/pubspec.yaml) is built for the simulator first. The app replaces
+# any running copy and is launched, so it shows up in the open preview
+# straight away. `device` is a UDID or `booted`.
+#
+# Build if needed, install and launch an app. Usage: just app <path> [device]
+app path device="booted":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    src="{{ path }}"
+    src="${src/#\~/$HOME}"
+    if [[ "$src" != *.app ]]; then
+      if [[ ! -f "$src/pubspec.yaml" && -f "$src/src/pubspec.yaml" ]]; then src="$src/src"; fi
+      if [[ ! -f "$src/pubspec.yaml" ]]; then echo "Not a .app or a Flutter project: {{ path }}" >&2; exit 1; fi
+      (cd "$src" && flutter build ios --simulator --debug)
+      src=$(ls -d "$src"/build/ios/iphonesimulator/*.app | head -1)
+    fi
+    bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$src/Info.plist")
+    xcrun simctl install "{{ device }}" "$src"
+    xcrun simctl launch --terminate-running-process "{{ device }}" "$bundle"
+
+# Flutter takes a device by UDID or name, not `booted`, so the UDID is looked
+# up first. Stays in the foreground: r hot-reloads, R restarts, q quits.
+#
+# Run a Flutter project on the simulator with hot reload. Usage: just app-run <path> [device]
+app-run path device="booted":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    src="{{ path }}"
+    src="${src/#\~/$HOME}"
+    if [[ ! -f "$src/pubspec.yaml" && -f "$src/src/pubspec.yaml" ]]; then src="$src/src"; fi
+    udid=$(xcrun simctl getenv "{{ device }}" SIMULATOR_UDID)
+    cd "$src" && exec flutter run -d "$udid"
 
 # Freezes the whole bar, not just the clock: a carrier name or a battery that
 # drops a percent mid-take dates the footage as surely as a wrong time does.
