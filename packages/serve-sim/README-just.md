@@ -29,7 +29,10 @@ serve-sim streams whatever runs on the simulator, so putting an app in the previ
 just app ~/path/to/App.app              # install and launch a ready build
 just app ~/path/to/flutter-project      # build it for the simulator first, then the same
 just app-run ~/path/to/flutter-project  # flutter run with hot reload (r, R, q), in the foreground
+just app-fresh ~/path/to/flutter-project  # delete the app and its data, then as `app`: a first install
 ```
+
+`app-fresh` deletes the app only once the build has succeeded, so a broken build leaves the installed one alone. The keychain survives it, as it survives a reinstall on a device, so whatever the app keeps there (an id, a quota) is still around on first launch.
 
 A Flutter project is a folder with `pubspec.yaml`, or with one in `src/`. `app` replaces any running copy, so it is also how to put a fresh build on. Every app recipe works on the booted simulator; `just device=<udid> app ...` picks another.
 

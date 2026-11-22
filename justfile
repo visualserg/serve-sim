@@ -58,16 +58,40 @@ app path *overrides:
     #!/usr/bin/env bash
     set -euo pipefail
     shift
+    built=$("{{ just_executable() }}" --justfile "{{ justfile() }}" _build "{{ path }}")
+    xcrun simctl install "{{ device }}" "$built"
+    exec "{{ just_executable() }}" --justfile "{{ justfile() }}" device="{{ device }}" launch "$built" "$@"
+
+# The app is deleted with its data container (preferences, files) after the
+# build succeeds and before the install, so it starts as on a first install.
+# The keychain stays, as iOS keeps it across a reinstall on a device too, and
+# what the app does with it on first launch is the app's own business.
+#
+# Reinstall an app from scratch and launch it. Usage: just app-fresh <path> [KEY=VALUE ...]
+[positional-arguments]
+app-fresh path *overrides:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
+    built=$("{{ just_executable() }}" --justfile "{{ justfile() }}" _build "{{ path }}")
+    bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$built/Info.plist")
+    xcrun simctl uninstall "{{ device }}" "$bundle" 2>/dev/null || true
+    xcrun simctl install "{{ device }}" "$built"
+    exec "{{ just_executable() }}" --justfile "{{ justfile() }}" device="{{ device }}" launch "$built" "$@"
+
+# Prints the .app to install: a .app as it is, a Flutter project built for the
+# simulator first (its build log goes to stderr, so it still shows).
+[private]
+_build path:
+    #!/usr/bin/env bash
+    set -euo pipefail
     src="{{ path }}"
     src="${src/#\~/$HOME}"
-    if [[ "$src" != *.app ]]; then
-      if [[ ! -f "$src/pubspec.yaml" && -f "$src/src/pubspec.yaml" ]]; then src="$src/src"; fi
-      if [[ ! -f "$src/pubspec.yaml" ]]; then echo "Not a .app or a Flutter project: {{ path }}" >&2; exit 1; fi
-      (cd "$src" && flutter build ios --simulator --debug)
-      src=$(ls -d "$src"/build/ios/iphonesimulator/*.app | head -1)
-    fi
-    xcrun simctl install "{{ device }}" "$src"
-    exec "{{ just_executable() }}" --justfile "{{ justfile() }}" device="{{ device }}" launch "$src" "$@"
+    if [[ "$src" == *.app ]]; then echo "$src"; exit; fi
+    if [[ ! -f "$src/pubspec.yaml" && -f "$src/src/pubspec.yaml" ]]; then src="$src/src"; fi
+    if [[ ! -f "$src/pubspec.yaml" ]]; then echo "Not a .app or a Flutter project: {{ path }}" >&2; exit 1; fi
+    (cd "$src" && flutter build ios --simulator --debug) >&2
+    ls -d "$src"/build/ios/iphonesimulator/*.app | head -1
 
 # For an app that reads `Library/Application Support/debug-overrides.env` in
 # its data container at startup, in debug builds only. They hold
