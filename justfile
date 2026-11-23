@@ -193,7 +193,10 @@ prefs app *changes:
     xcrun simctl launch "{{ device }}" "$bundle"
 
 # Writes the overrides file for `launch` and `app-run`, or removes it when
-# there are none. Staged and moved, so a launch never reads half of it.
+# there are none. Staged and moved, so a launch never reads half of it. A
+# value starting with `~/` is expanded here: an app on the simulator can read
+# the Mac's files, but its own home is its container, and zsh leaves a `~`
+# after `=` alone.
 [private]
 [positional-arguments]
 _overrides bundle *overrides:
@@ -203,13 +206,16 @@ _overrides bundle *overrides:
     data=$(xcrun simctl get_app_container "{{ device }}" "{{ bundle }}" data)
     file="$data/Library/Application Support/debug-overrides.env"
     if (( $# == 0 )); then rm -f "$file"; exit; fi
+    lines=()
     for kv in "$@"; do
       [[ "$kv" =~ ^[A-Za-z_][A-Za-z0-9_.]*= ]] || { echo "Not KEY=VALUE: $kv" >&2; exit 1; }
+      value="${kv#*=}"
+      lines+=("${kv%%=*}=${value/#\~\//$HOME/}")
     done
     mkdir -p "${file%/*}"
-    printf '%s\n' "$@" > "$file.part"
+    printf '%s\n' "${lines[@]}" > "$file.part"
     mv "$file.part" "$file"
-    printf 'override %s\n' "$@"
+    printf 'override %s\n' "${lines[@]}"
 
 # A .app or a Flutter project's last simulator build gives the id it was
 # installed under; without a build, the Xcode project's own setting.

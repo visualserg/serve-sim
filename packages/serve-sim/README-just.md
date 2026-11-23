@@ -49,6 +49,8 @@ just app-run ~/path/to/flutter-project showAdminPanel=true  # and under flutter 
 
 `launch` relaunches the installed app in about a second. The app is a project folder, a `.app` or a bundle id.
 
+An app on the simulator can read the Mac's files, so a value can be a path on this Mac, such as an image for the app to show. A leading `~/` is expanded to the Mac's home before the value is written, since the app's own home is its container and zsh leaves a `~` after `=` alone. Desktop, Documents and Downloads are the exception: macOS guards them, and the app's read there stalls instead of failing, so a file from those folders is better copied into the app's container first.
+
 The overrides go to `Library/Application Support/debug-overrides.env` in the app's data container, one `KEY=VALUE` per line, and the app reads that file at startup in debug builds. They hold until the next launch through `just`, so a relaunch iOS does on its own (a crash, a permission revoked in Settings) keeps them, and `R` under `flutter run` rereads them. What the app logs under `[DebugOverrides]` is echoed back after a `launch`, so a mistyped key or a value of the wrong type shows up right there:
 
 ```
